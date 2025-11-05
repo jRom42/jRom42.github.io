@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scanner Code 39</title>
+  <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: start;
+      background: #fafafa;
+      min-height: 100vh;
+    }
+    h1 { margin-top: 20px; }
+    #scanner-container {
+      width: 90%;
+      max-width: 500px;
+      height: 300px;
+      border: 2px solid #444;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+    #controls {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 10px 15px;
+      border: none;
+      background-color: #0066cc;
+      color: white;
+      font-size: 16px;
+      border-radius: 5px;
+    }
+    button:disabled {
+      background-color: #999;
+    }
+    #result {
+      margin-top: 20px;
+      font-size: 1.2em;
+      color: #333;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h1>Scanner Code 39</h1>
+
+  <div id="scanner-container"></div>
+
+  <div id="controls">
+    <button id="start-button">Démarrer le scan</button>
+    <button id="stop-button" disabled>Arrêter</button>
+  </div>
+
+  <p id="result">Aucun code détecté.</p>
+
+  <script>
+    const startBtn = document.getElementById('start-button');
+    const stopBtn = document.getElementById('stop-button');
+    const resultElem = document.getElementById('result');
+
+    let isRunning = false;
+
+    function startScanner() {
+      if (isRunning) return;
+
+      Quagga.init({
+        inputStream: {
+          name: "Live",
+          type: "LiveStream",
+          target: document.querySelector('#scanner-container'),
+          constraints: {
+            facingMode: "environment", // caméra arrière
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
+        },
+        decoder: {
+          readers: ["code_39_reader"]
+        },
+        locate: true
+      }, function(err) {
+        if (err) {
+          console.error(err);
+          resultElem.textContent = "Erreur : " + err.message;
+          return;
+        }
+        Quagga.start();
+        isRunning = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      });
+
+      Quagga.onDetected(data => {
+        const code = data.codeResult.code;
+        resultElem.textContent = "Code détecté : " + code;
+        navigator.vibrate?.(200); // vibration légère (si supportée)
+      });
+    }
+
+    function stopScanner() {
+      if (!isRunning) return;
+      Quagga.stop();
+      isRunning = false;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      resultElem.textContent = "Scan arrêté.";
+    }
+
+    startBtn.addEventListener('click', startScanner);
+    stopBtn.addEventListener('click', stopScanner);
+  </script>
+</body>
+</html>
