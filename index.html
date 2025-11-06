@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scanner Code 39</title>
+  <title>Scanner Code 39 (Optimisé)</title>
 
-  <!-- Librairie QuaggaJS -->
-  <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+  <!-- ⚙️ Librairie Quagga2 (version maintenue) -->
+  <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
 
-  <!-- Fichier de configuration PWA -->
   <link rel="manifest" href="manifest.json">
 
   <style>
@@ -31,6 +30,15 @@
       overflow: hidden;
       position: relative;
       background: black;
+    }
+    #overlay {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 80%; height: 30%;
+      transform: translate(-50%, -50%);
+      border: 2px dashed rgba(255,255,255,0.7);
+      box-shadow: 0 0 15px rgba(0,0,0,0.5);
+      pointer-events: none;
     }
     #controls {
       margin-top: 20px;
@@ -60,7 +68,9 @@
 <body>
   <h1>Scanner Code 39</h1>
 
-  <div id="scanner-container"></div>
+  <div id="scanner-container">
+    <div id="overlay"></div>
+  </div>
 
   <div id="controls">
     <button id="start-button">Démarrer le scan</button>
@@ -74,8 +84,9 @@
     const stopBtn = document.getElementById('stop-button');
     const resultElem = document.getElementById('result');
     let isRunning = false;
+    let lastResult = null;
+    let detectionCount = 0;
 
-    // 🔗 Remplace par ton webhook
     const WEBHOOK_URL = "https://votre-webhook.com/endpoint";
 
     function startScanner() {
@@ -87,11 +98,23 @@
           type: "LiveStream",
           target: document.querySelector('#scanner-container'),
           constraints: {
-            facingMode: "environment"
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            aspectRatio: { ideal: 1.777 },
+            focusMode: "continuous" // non standard but helps where supported
           }
         },
-        decoder: { readers: ["code_39_reader"] },
-        locate: true
+        decoder: {
+          readers: ["code_39_reader"],
+          multiple: false
+        },
+        locator: {
+          patchSize: "medium",
+          halfSample: false
+        },
+        locate: true,
+        numOfWorkers: navigator.hardwareConcurrency || 4
       }, function(err) {
         if (err) {
           console.error(err);
@@ -105,7 +128,25 @@
         resultElem.textContent = "📷 Scannez un code-barres Code 39...";
       });
 
-      Quagga.onDetected(onBarcodeDetected);
+      Quagga.onDetected(processDetection);
+    }
+
+    function processDetection(data) {
+      const code = data.codeResult.code;
+      const decoded = data.codeResult.decodedCodes;
+      const confidence = decoded.filter(c => c.error < 0.2).length / decoded.length;
+
+      if (confidence > 0.5) {
+        if (code === lastResult) {
+          detectionCount++;
+          if (detectionCount >= 2) {
+            onBarcodeDetected(data);
+          }
+        } else {
+          lastResult = code;
+          detectionCount = 1;
+        }
+      }
     }
 
     async function onBarcodeDetected(data) {
@@ -113,7 +154,7 @@
       resultElem.textContent = "Code détecté : " + code;
       navigator.vibrate?.(200);
 
-      stopScanner(); // 🛑 arrêt automatique
+      stopScanner();
 
       try {
         const response = await fetch(WEBHOOK_URL, {
@@ -127,7 +168,6 @@
 
         let message = "";
         if (response.ok) {
-          // 🔁 Lecture réponse du webhook
           const contentType = response.headers.get("Content-Type") || "";
           if (contentType.includes("application/json")) {
             const data = await response.json();
@@ -148,6 +188,7 @@
     function stopScanner() {
       if (!isRunning) return;
       Quagga.stop();
+      Quagga.offDetected(processDetection);
       isRunning = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -156,7 +197,6 @@
     startBtn.addEventListener('click', startScanner);
     stopBtn.addEventListener('click', stopScanner);
 
-    // 📲 Enregistrement du service worker pour PWA
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js')
         .then(() => console.log('✅ Service worker enregistré'))
