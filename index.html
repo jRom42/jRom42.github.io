@@ -1,22 +1,25 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scanner Code 39</title>
-  <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
-  <link rel="manifest" href="manifest.json">
+  <script src="https://unpkg.com/@zxing/browser@latest"></script>
+  <link rel="manifest" href="manifest.json" />
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 0; padding: 0;
+      margin: 0;
+      padding: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       background: #fafafa;
       min-height: 100vh;
     }
-    h1 { margin-top: 20px; }
+    h1 {
+      margin-top: 20px;
+    }
     #scanner-container {
       width: 90%;
       max-width: 500px;
@@ -24,17 +27,23 @@
       border: 2px solid #444;
       border-radius: 8px;
       overflow: hidden;
-      position: relative;
       background: black;
+      position: relative;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
     #controls {
       margin-top: 20px;
       display: flex;
-      gap: 10px;
       flex-wrap: wrap;
       justify-content: center;
+      gap: 10px;
     }
-    button, select {
+    button,
+    select {
       padding: 10px 15px;
       border: none;
       background-color: #0066cc;
@@ -43,7 +52,9 @@
       border-radius: 5px;
       cursor: pointer;
     }
-    button:disabled { background-color: #999; }
+    button:disabled {
+      background-color: #999;
+    }
     select {
       background-color: white;
       color: #333;
@@ -63,7 +74,9 @@
 <body>
   <h1>Scanner Code 39</h1>
 
-  <div id="scanner-container"></div>
+  <div id="scanner-container">
+    <video id="video" muted playsinline></video>
+  </div>
 
   <div id="controls">
     <select id="camera-select"></select>
@@ -75,89 +88,95 @@
   <p id="result">Aucun code détecté.</p>
 
   <script>
-    const startBtn = document.getElementById('start-button');
-    const stopBtn = document.getElementById('stop-button');
-    const flashBtn = document.getElementById('toggle-flash');
-    const cameraSelect = document.getElementById('camera-select');
-    const resultElem = document.getElementById('result');
+    const { BrowserMultiFormatReader, NotFoundException } = ZXingBrowser;
 
-    let isRunning = false;
-    let torchOn = false;
-    let currentTrack = null;
+    const startBtn = document.getElementById("start-button");
+    const stopBtn = document.getElementById("stop-button");
+    const flashBtn = document.getElementById("toggle-flash");
+    const cameraSelect = document.getElementById("camera-select");
+    const resultElem = document.getElementById("result");
+    const videoElem = document.getElementById("video");
 
     const WEBHOOK_URL = "https://votre-webhook.com/endpoint";
 
-    // ---- Populate camera list ----
-    async function populateCameraList() {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    let codeReader;
+    let currentDeviceId = null;
+    let currentStream = null;
+    let torchOn = false;
 
+    async function listCameras() {
+      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
       cameraSelect.innerHTML = "";
-      for (const device of videoDevices) {
-        const option = document.createElement('option');
+      for (const device of devices) {
+        const option = document.createElement("option");
         option.value = device.deviceId;
         option.textContent = device.label || `Caméra ${cameraSelect.length + 1}`;
         cameraSelect.appendChild(option);
       }
 
-      const lastUsed = localStorage.getItem('lastCameraId');
-      if (lastUsed && videoDevices.some(d => d.deviceId === lastUsed)) {
+      const lastUsed = localStorage.getItem("lastCameraId");
+      if (lastUsed && devices.some((d) => d.deviceId === lastUsed)) {
         cameraSelect.value = lastUsed;
+      } else if (devices[0]) {
+        cameraSelect.value = devices[0].deviceId;
       }
     }
 
-    // ---- Start Scanner ----
-    function startScanner() {
-      if (isRunning) return;
+    async function startScanner() {
+      stopScanner();
 
-      const selectedDeviceId = cameraSelect.value || undefined;
-      localStorage.setItem('lastCameraId', selectedDeviceId || '');
+      currentDeviceId = cameraSelect.value;
+      localStorage.setItem("lastCameraId", currentDeviceId);
 
-      Quagga.init({
-        inputStream: {
-          name: "Live",
-          type: "LiveStream",
-          target: document.querySelector('#scanner-container'),
-          constraints: {
-            deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            focusMode: "continuous"
-          }
-        },
-        decoder: { readers: ["code_39_reader"] },
-        locate: true
-      }, function(err) {
-        if (err) {
-          console.error(err);
-          resultElem.textContent = "Erreur : " + err.message;
-          return;
-        }
-        Quagga.start();
-        isRunning = true;
-        startBtn.disabled = true;
+      codeReader = new BrowserMultiFormatReader();
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: currentDeviceId },
+            focusMode: "continuous",
+          },
+        });
+
+        videoElem.srcObject = currentStream;
+        videoElem.play();
+
+        flashBtn.disabled = false;
         stopBtn.disabled = false;
+        startBtn.disabled = true;
         resultElem.textContent = "📷 Scannez un code-barres Code 39...";
-        setCameraTrack();
-      });
 
-      Quagga.onDetected(onBarcodeDetected);
+        detectLoop();
+      } catch (err) {
+        console.error("Erreur démarrage caméra:", err);
+        resultElem.textContent = "Erreur : " + err.message;
+      }
     }
 
-    // ---- Stop Scanner ----
-    function stopScanner() {
-      if (!isRunning) return;
-      Quagga.stop();
-      isRunning = false;
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      toggleFlash(false);
+    async function detectLoop() {
+      if (!codeReader) return;
+
+      try {
+        const result = await codeReader.decodeOnceFromVideoDevice(
+          currentDeviceId,
+          "video"
+        );
+
+        if (result && result.text) {
+          onBarcodeDetected(result.text);
+        } else {
+          detectLoop();
+        }
+      } catch (err) {
+        if (err instanceof NotFoundException) {
+          requestAnimationFrame(detectLoop);
+        } else {
+          console.error("Erreur de lecture:", err);
+        }
+      }
     }
 
-    // ---- Handle detection ----
-    async function onBarcodeDetected(data) {
-      const code = data.codeResult.code;
+    async function onBarcodeDetected(code) {
       resultElem.textContent = "Code détecté : " + code;
       navigator.vibrate?.(200);
       stopScanner();
@@ -166,12 +185,15 @@
         const response = await fetch(WEBHOOK_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ barcode: code, timestamp: new Date().toISOString() })
+          body: JSON.stringify({
+            barcode: code,
+            timestamp: new Date().toISOString(),
+          }),
         });
 
-        let message = "";
         if (response.ok) {
           const contentType = response.headers.get("Content-Type") || "";
+          let message = "";
           if (contentType.includes("application/json")) {
             const data = await response.json();
             message = data.message || JSON.stringify(data, null, 2);
@@ -188,48 +210,55 @@
       }
     }
 
-    // ---- Flashlight toggle ----
-    async function setCameraTrack() {
-      const stream = Quagga.CameraAccess.getActiveStream();
-      if (!stream) return;
-      const tracks = stream.getVideoTracks();
-      currentTrack = tracks.length ? tracks[0] : null;
+    function stopScanner() {
+      if (currentStream) {
+        currentStream.getTracks().forEach((t) => t.stop());
+        currentStream = null;
+      }
+      if (codeReader) {
+        codeReader.reset();
+        codeReader = null;
+      }
+      flashBtn.disabled = true;
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+      torchOn = false;
     }
 
-    async function toggleFlash(forceOff = false) {
-      if (!currentTrack) return;
-
-      const capabilities = currentTrack.getCapabilities();
+    async function toggleFlash() {
+      if (!currentStream) return;
+      const track = currentStream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities();
       if (!capabilities.torch) {
         alert("⚠️ Le flash n’est pas supporté sur cet appareil.");
         return;
       }
-
-      torchOn = forceOff ? false : !torchOn;
+      torchOn = !torchOn;
       try {
-        await currentTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
         flashBtn.textContent = torchOn ? "💡 Flash ON" : "🔦 Flash";
       } catch (err) {
-        console.error("Torch error:", err);
+        console.error("Erreur torch:", err);
       }
     }
 
-    // ---- Event bindings ----
-    startBtn.addEventListener('click', startScanner);
-    stopBtn.addEventListener('click', stopScanner);
-    flashBtn.addEventListener('click', () => toggleFlash());
+    // Bind events
+    startBtn.addEventListener("click", startScanner);
+    stopBtn.addEventListener("click", stopScanner);
+    flashBtn.addEventListener("click", toggleFlash);
 
-    // ---- Init ----
-    if ('mediaDevices' in navigator) {
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(() => populateCameraList())
+    // Init
+    if ("mediaDevices" in navigator) {
+      navigator.mediaDevices
+        .getUserMedia({ video: true })
+        .then(() => listCameras())
         .catch(console.error);
     }
 
-    // ---- Service Worker ----
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js')
-        .then(() => console.log('✅ Service worker enregistré'))
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("sw.js")
+        .then(() => console.log("✅ Service worker enregistré"))
         .catch(console.error);
     }
   </script>
