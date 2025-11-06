@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scanner Code 39 (Autofocus Amélioré)</title>
+  <title>Scanner Code 39 (Autofocus + Flashlight)</title>
 
   <!-- ⚙️ Librairie Quagga2 -->
   <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
@@ -44,8 +44,8 @@
       width: 100%;
       text-align: center;
       font-size: 14px;
-      color: rgba(255,255,255,0.8);
-      background: rgba(0,0,0,0.3);
+      color: rgba(255,255,255,0.85);
+      background: rgba(0,0,0,0.4);
       padding: 4px 0;
       pointer-events: none;
     }
@@ -53,6 +53,8 @@
       margin-top: 20px;
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     button {
       padding: 10px 15px;
@@ -64,6 +66,9 @@
       cursor: pointer;
     }
     button:disabled { background-color: #999; }
+    #flash-button.active {
+      background-color: #ffb400;
+    }
     #result {
       margin-top: 20px;
       font-size: 1.2em;
@@ -79,12 +84,13 @@
 
   <div id="scanner-container">
     <div id="overlay"></div>
-    <div id="focus-hint">💡 Éloignez légèrement le code et touchez l’écran pour ajuster la mise au point</div>
+    <div id="focus-hint">💡 Touchez l’écran pour refaire la mise au point • 🔦 Appuyez sur “Flash” si la lumière est faible</div>
   </div>
 
   <div id="controls">
-    <button id="start-button">Démarrer le scan</button>
+    <button id="start-button">Démarrer</button>
     <button id="stop-button" disabled>Arrêter</button>
+    <button id="flash-button" disabled>Flash 🔦</button>
   </div>
 
   <p id="result">Aucun code détecté.</p>
@@ -92,11 +98,14 @@
   <script>
     const startBtn = document.getElementById('start-button');
     const stopBtn = document.getElementById('stop-button');
+    const flashBtn = document.getElementById('flash-button');
     const scannerContainer = document.getElementById('scanner-container');
     const resultElem = document.getElementById('result');
     let isRunning = false;
     let lastResult = null;
     let detectionCount = 0;
+    let torchOn = false;
+    let activeTrack = null;
 
     const WEBHOOK_URL = "https://votre-webhook.com/endpoint";
 
@@ -112,7 +121,7 @@
             facingMode: "environment",
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            focusMode: "continuous", // supported on some devices
+            focusMode: "continuous",
             advanced: [{ focusMode: "continuous" }]
           }
         },
@@ -130,28 +139,50 @@
         isRunning = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
+        flashBtn.disabled = false;
         resultElem.textContent = "📷 Scannez un code-barres Code 39...\n💡 Éloignez légèrement le code et laissez la caméra faire la mise au point.";
+
+        activeTrack = Quagga.CameraAccess.getActiveTrack();
+        if (!activeTrack?.getCapabilities()?.torch) {
+          flashBtn.disabled = true;
+        }
       });
 
       Quagga.onDetected(processDetection);
 
-      // 👆 Tap-to-focus support
-      scannerContainer.addEventListener('click', async () => {
-        const track = Quagga.CameraAccess.getActiveTrack();
-        if (track && typeof track.applyConstraints === 'function') {
-          try {
-            await track.applyConstraints({
-              advanced: [{ focusMode: "continuous" }]
-            });
-            resultElem.textContent = "🔍 Mise au point relancée...";
-            setTimeout(() => {
-              resultElem.textContent = "📷 Essayez de scanner à nouveau...";
-            }, 1200);
-          } catch (e) {
-            console.warn("Focus non supporté :", e);
-          }
+      // 👆 Tap-to-focus
+      scannerContainer.addEventListener('click', refocusCamera);
+      flashBtn.addEventListener('click', toggleFlash);
+    }
+
+    async function refocusCamera() {
+      const track = Quagga.CameraAccess.getActiveTrack();
+      if (track && typeof track.applyConstraints === 'function') {
+        try {
+          await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+          resultElem.textContent = "🔍 Mise au point relancée...";
+          setTimeout(() => resultElem.textContent = "📷 Essayez de scanner à nouveau...", 1200);
+        } catch (e) {
+          console.warn("Focus non supporté :", e);
         }
-      });
+      }
+    }
+
+    async function toggleFlash() {
+      if (!activeTrack) return;
+      const capabilities = activeTrack.getCapabilities();
+      if (!capabilities.torch) {
+        alert("⚠️ Le flash n’est pas supporté sur cet appareil.");
+        return;
+      }
+      try {
+        torchOn = !torchOn;
+        await activeTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+        flashBtn.classList.toggle('active', torchOn);
+        flashBtn.textContent = torchOn ? "Flash 💡 (On)" : "Flash 🔦 (Off)";
+      } catch (e) {
+        console.warn("Impossible d’activer le flash :", e);
+      }
     }
 
     function processDetection(data) {
@@ -162,9 +193,7 @@
       if (confidence > 0.5) {
         if (code === lastResult) {
           detectionCount++;
-          if (detectionCount >= 2) {
-            onBarcodeDetected(data);
-          }
+          if (detectionCount >= 2) onBarcodeDetected(data);
         } else {
           lastResult = code;
           detectionCount = 1;
@@ -215,6 +244,8 @@
       isRunning = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
+      flashBtn.disabled = true;
+      torchOn = false;
     }
 
     startBtn.addEventListener('click', startScanner);
