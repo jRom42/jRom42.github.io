@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scanner Code 39 (Optimisé)</title>
+  <title>Scanner Code 39 (Autofocus Amélioré)</title>
 
-  <!-- ⚙️ Librairie Quagga2 (version maintenue) -->
+  <!-- ⚙️ Librairie Quagga2 -->
   <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
-
-  <link rel="manifest" href="manifest.json">
 
   <style>
     body {
@@ -37,7 +35,18 @@
       width: 80%; height: 30%;
       transform: translate(-50%, -50%);
       border: 2px dashed rgba(255,255,255,0.7);
-      box-shadow: 0 0 15px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+    #focus-hint {
+      position: absolute;
+      bottom: 8px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      font-size: 14px;
+      color: rgba(255,255,255,0.8);
+      background: rgba(0,0,0,0.3);
+      padding: 4px 0;
       pointer-events: none;
     }
     #controls {
@@ -70,6 +79,7 @@
 
   <div id="scanner-container">
     <div id="overlay"></div>
+    <div id="focus-hint">💡 Éloignez légèrement le code et touchez l’écran pour ajuster la mise au point</div>
   </div>
 
   <div id="controls">
@@ -82,6 +92,7 @@
   <script>
     const startBtn = document.getElementById('start-button');
     const stopBtn = document.getElementById('stop-button');
+    const scannerContainer = document.getElementById('scanner-container');
     const resultElem = document.getElementById('result');
     let isRunning = false;
     let lastResult = null;
@@ -96,23 +107,17 @@
         inputStream: {
           name: "Live",
           type: "LiveStream",
-          target: document.querySelector('#scanner-container'),
+          target: scannerContainer,
           constraints: {
             facingMode: "environment",
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            aspectRatio: { ideal: 1.777 },
-            focusMode: "continuous" // non standard but helps where supported
+            focusMode: "continuous", // supported on some devices
+            advanced: [{ focusMode: "continuous" }]
           }
         },
-        decoder: {
-          readers: ["code_39_reader"],
-          multiple: false
-        },
-        locator: {
-          patchSize: "medium",
-          halfSample: false
-        },
+        decoder: { readers: ["code_39_reader"] },
+        locator: { patchSize: "medium", halfSample: false },
         locate: true,
         numOfWorkers: navigator.hardwareConcurrency || 4
       }, function(err) {
@@ -125,10 +130,28 @@
         isRunning = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        resultElem.textContent = "📷 Scannez un code-barres Code 39...";
+        resultElem.textContent = "📷 Scannez un code-barres Code 39...\n💡 Éloignez légèrement le code et laissez la caméra faire la mise au point.";
       });
 
       Quagga.onDetected(processDetection);
+
+      // 👆 Tap-to-focus support
+      scannerContainer.addEventListener('click', async () => {
+        const track = Quagga.CameraAccess.getActiveTrack();
+        if (track && typeof track.applyConstraints === 'function') {
+          try {
+            await track.applyConstraints({
+              advanced: [{ focusMode: "continuous" }]
+            });
+            resultElem.textContent = "🔍 Mise au point relancée...";
+            setTimeout(() => {
+              resultElem.textContent = "📷 Essayez de scanner à nouveau...";
+            }, 1200);
+          } catch (e) {
+            console.warn("Focus non supporté :", e);
+          }
+        }
+      });
     }
 
     function processDetection(data) {
@@ -151,7 +174,7 @@
 
     async function onBarcodeDetected(data) {
       const code = data.codeResult.code;
-      resultElem.textContent = "Code détecté : " + code;
+      resultElem.textContent = "✅ Code détecté : " + code;
       navigator.vibrate?.(200);
 
       stopScanner();
@@ -196,12 +219,6 @@
 
     startBtn.addEventListener('click', startScanner);
     stopBtn.addEventListener('click', stopScanner);
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js')
-        .then(() => console.log('✅ Service worker enregistré'))
-        .catch(console.error);
-    }
   </script>
 </body>
 </html>
