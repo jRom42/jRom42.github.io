@@ -35,32 +35,6 @@
       height: 100%;
       object-fit: cover;
     }
-    #controls {
-      margin-top: 20px;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 10px;
-    }
-    button,
-    select {
-      padding: 10px 15px;
-      border: none;
-      background-color: #0066cc;
-      color: white;
-      font-size: 16px;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-    button:disabled {
-      background-color: #999;
-    }
-    select {
-      background-color: white;
-      color: #333;
-      border: 1px solid #ccc;
-      cursor: pointer;
-    }
     #result {
       margin-top: 20px;
       font-size: 1.2em;
@@ -78,22 +52,11 @@
     <video id="video" muted playsinline></video>
   </div>
 
-  <div id="controls">
-    <select id="camera-select"></select>
-    <button id="toggle-flash">🔦 Flash</button>
-    <button id="start-button">▶️ Démarrer</button>
-    <button id="stop-button" disabled>⏹️ Arrêter</button>
-  </div>
-
   <p id="result">Aucun code détecté.</p>
 
   <script>
     const { BrowserMultiFormatReader, NotFoundException } = ZXingBrowser;
 
-    const startBtn = document.getElementById("start-button");
-    const stopBtn = document.getElementById("stop-button");
-    const flashBtn = document.getElementById("toggle-flash");
-    const cameraSelect = document.getElementById("camera-select");
     const resultElem = document.getElementById("result");
     const videoElem = document.getElementById("video");
 
@@ -102,35 +65,24 @@
     let codeReader;
     let currentDeviceId = null;
     let currentStream = null;
-    let torchOn = false;
-
-    async function listCameras() {
-      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-      cameraSelect.innerHTML = "";
-      for (const device of devices) {
-        const option = document.createElement("option");
-        option.value = device.deviceId;
-        option.textContent = device.label || `Caméra ${cameraSelect.length + 1}`;
-        cameraSelect.appendChild(option);
-      }
-
-      const lastUsed = localStorage.getItem("lastCameraId");
-      if (lastUsed && devices.some((d) => d.deviceId === lastUsed)) {
-        cameraSelect.value = lastUsed;
-      } else if (devices[0]) {
-        cameraSelect.value = devices[0].deviceId;
-      }
-    }
 
     async function startScanner() {
       stopScanner();
-
-      currentDeviceId = cameraSelect.value;
-      localStorage.setItem("lastCameraId", currentDeviceId);
-
       codeReader = new BrowserMultiFormatReader();
 
       try {
+        const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+        const deviceId =
+          localStorage.getItem("lastCameraId") ||
+          (devices[0] && devices[0].deviceId);
+        if (!deviceId) {
+          resultElem.textContent = "Aucune caméra détectée.";
+          return;
+        }
+        localStorage.setItem("lastCameraId", deviceId);
+
+        currentDeviceId = deviceId;
+
         currentStream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: { exact: currentDeviceId },
@@ -140,10 +92,6 @@
 
         videoElem.srcObject = currentStream;
         videoElem.play();
-
-        flashBtn.disabled = false;
-        stopBtn.disabled = false;
-        startBtn.disabled = true;
         resultElem.textContent = "📷 Scannez un code-barres Code 39...";
 
         detectLoop();
@@ -219,39 +167,12 @@
         codeReader.reset();
         codeReader = null;
       }
-      flashBtn.disabled = true;
-      stopBtn.disabled = true;
-      startBtn.disabled = false;
-      torchOn = false;
     }
 
-    async function toggleFlash() {
-      if (!currentStream) return;
-      const track = currentStream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities();
-      if (!capabilities.torch) {
-        alert("⚠️ Le flash n’est pas supporté sur cet appareil.");
-        return;
-      }
-      torchOn = !torchOn;
-      try {
-        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
-        flashBtn.textContent = torchOn ? "💡 Flash ON" : "🔦 Flash";
-      } catch (err) {
-        console.error("Erreur torch:", err);
-      }
-    }
-
-    // Bind events
-    startBtn.addEventListener("click", startScanner);
-    stopBtn.addEventListener("click", stopScanner);
-    flashBtn.addEventListener("click", toggleFlash);
-
-    // Init
     if ("mediaDevices" in navigator) {
       navigator.mediaDevices
         .getUserMedia({ video: true })
-        .then(() => listCameras())
+        .then(() => startScanner())
         .catch(console.error);
     }
 
